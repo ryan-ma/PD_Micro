@@ -1,4 +1,15 @@
-// Minimalist USB PD Task for Ardunio with only UFP(device) functionality
+
+/**
+ * PD_UFP.h
+ *
+ *  Created on: Nov 16, 2020
+ *      Author: Ryan Ma
+ *
+ * Minimalist USB PD Ardunio Library for PD Micro board
+ * Only support UFP(device) functionality
+ * Requires FUSB302_UFP.h, PD_UFP_Protocol.h and Standard Arduino Library
+ *
+ */
 
 #ifndef PD_UFP_H
 #define PD_UFP_H
@@ -57,8 +68,8 @@ class PD_UFP_c
         void handle_FUSB302_event(FUSB302_event_t events);
         bool timer(void);
         // Device
-        struct FUSB302_dev_t FUSB302;
-        struct PD_protocol_t protocol;
+        FUSB302_dev_t FUSB302;
+        PD_protocol_t protocol;
         // Power ready power
         uint16_t ready_voltage;
         uint16_t ready_current;

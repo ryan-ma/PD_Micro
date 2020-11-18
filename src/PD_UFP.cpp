@@ -1,4 +1,16 @@
 
+/**
+ * PD_UFP.h
+ *
+ *  Created on: Nov 16, 2020
+ *      Author: Ryan Ma
+ *
+ * Minimalist USB PD Ardunio Library for PD Micro board
+ * Only support UFP(device) functionality
+ * Requires FUSB302_UFP.h, PD_UFP_Protocol.h and Standard Arduino Library
+ *
+ */
+ 
 #include <stdint.h>
 #include <string.h>
 
@@ -62,7 +74,7 @@ void PD_UFP_c::handle_protocol_event(PD_protocol_event_t events)
         print_src_cap = 1;
     }
     if (events & PD_PROTOCOL_EVENT_PS_RDY) {
-        struct PD_power_info_t p = {0};
+        PD_power_info_t p = {0};
         uint8_t selected_power = PD_protocol_get_selected_power(&protocol);
         PD_protocol_get_power_info(&protocol, selected_power, &p);
         ready_voltage = p.max_v;
@@ -112,6 +124,8 @@ void PD_UFP_c::handle_FUSB302_event(FUSB302_event_t events)
         if (cc > 1) {
             wait_src_cap = 1;
         } else {
+            ready_voltage = PD_V(5);
+            ready_current = PD_A(1);
             status_power_ready = 1;
         }
     }
@@ -251,8 +265,8 @@ PD_UFP_c::PD_UFP_c():
     print_src_cap(0),
     print_power_ready(0)
 {
-    memset(&FUSB302, 0, sizeof(struct FUSB302_dev_t));
-    memset(&protocol, 0, sizeof(struct PD_protocol_t));
+    memset(&FUSB302, 0, sizeof(FUSB302_dev_t));
+    memset(&protocol, 0, sizeof(PD_protocol_t));
 }
 
 void PD_UFP_c::init(enum PD_power_option_t power_option = PD_POWER_OPTION_MAX_5V)
@@ -364,7 +378,7 @@ void PD_UFP_c::print_status(void)
         }
     } else if (print_cc) {
         print_cc = 0;
-        const char * detection_type_str[] = {"vRd-USB", "vRd-1.5", "vRd-3.0"};
+        const char *detection_type_str[] = {"vRd-USB", "vRd-1.5", "vRd-3.0"};
         uint8_t cc1 = 0, cc2 = 0;
         FUSB302_get_cc(&FUSB302, &cc1, &cc2);
         if (cc1 == 0 && cc2 == 0) {
@@ -378,7 +392,7 @@ void PD_UFP_c::print_status(void)
         }
     } else if (print_src_cap) {
         print_src_cap = 0;
-        struct PD_power_info_t p;
+        PD_power_info_t p;
         uint8_t selected = PD_protocol_get_selected_power(&protocol);
         for (uint8_t i = 0; PD_protocol_get_power_info(&protocol, i, &p); i++) {
             char min_v[8] = {0}, max_v[8] = {0}, power[8] = {0};
@@ -393,7 +407,7 @@ void PD_UFP_c::print_status(void)
         }
     } else if (print_power_ready) {
         print_power_ready = 0;
-        struct PD_power_info_t p;
+        PD_power_info_t p;
         uint8_t selected_power = PD_protocol_get_selected_power(&protocol);
         if (PD_protocol_get_power_info(&protocol, selected_power, &p)) {
             LOG("PD: %d.%02dV supply ready\n", p.max_v / 20, (p.max_v * 5) % 100);

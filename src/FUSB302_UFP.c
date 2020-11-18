@@ -1,4 +1,16 @@
 
+/**
+ * FUSB302_UFP.c
+ *
+ *  Created on: Nov 16, 2020
+ *      Author: Ryan Ma
+ *
+ * Minimalist USB PD implement with only UFP(device) functionality
+ * Requires only stdint.h and string.h
+ * No use of bit-field for better cross-platform compatibility
+ * 
+ */
+ 
 #include <string.h>
 #include "FUSB302_UFP.h"
 
@@ -230,7 +242,7 @@ enum FUSB302_state_t {
     if (reg_write(dev, addr, data, count) != FUSB302_SUCCESS) { return FUSB302_ERR_WRITE_DEVICE; } \
 } while(0)
 
-static inline FUSB302_ret_t reg_read(struct FUSB302_dev_t *dev, uint8_t address, uint8_t *data, uint8_t count)
+static inline FUSB302_ret_t reg_read(FUSB302_dev_t *dev, uint8_t address, uint8_t *data, uint8_t count)
 {
     FUSB302_ret_t ret = dev->i2c_read(dev->i2c_address, address, data, count);
     if (ret != FUSB302_SUCCESS) {
@@ -239,7 +251,7 @@ static inline FUSB302_ret_t reg_read(struct FUSB302_dev_t *dev, uint8_t address,
     return ret;
 }
 
-static inline FUSB302_ret_t reg_write(struct FUSB302_dev_t *dev, uint8_t address, uint8_t *data, uint8_t count)
+static inline FUSB302_ret_t reg_write(FUSB302_dev_t *dev, uint8_t address, uint8_t *data, uint8_t count)
 {
     FUSB302_ret_t ret = dev->i2c_write(dev->i2c_address, address, data, count);
     if (ret != FUSB302_SUCCESS) {
@@ -248,7 +260,7 @@ static inline FUSB302_ret_t reg_write(struct FUSB302_dev_t *dev, uint8_t address
     return ret;
 }
 
-static FUSB302_ret_t FUSB302_read_cc_lvl(struct FUSB302_dev_t *dev, uint8_t * cc_value)
+static FUSB302_ret_t FUSB302_read_cc_lvl(FUSB302_dev_t *dev, uint8_t * cc_value)
 {
     /*  00: < 200 mV          : vRa
         01: >200 mV, <660 mV  : vRd-USB
@@ -268,7 +280,7 @@ static FUSB302_ret_t FUSB302_read_cc_lvl(struct FUSB302_dev_t *dev, uint8_t * cc
 	return FUSB302_SUCCESS;
 }
 
-static FUSB302_ret_t FUSB302_read_incoming_packet(struct FUSB302_dev_t *dev, FUSB302_event_t * events)
+static FUSB302_ret_t FUSB302_read_incoming_packet(FUSB302_dev_t *dev, FUSB302_event_t * events)
 {
     uint8_t len, b[3];
     REG_READ(ADDRESS_FIFOS, b, 3);
@@ -282,7 +294,7 @@ static FUSB302_ret_t FUSB302_read_incoming_packet(struct FUSB302_dev_t *dev, FUS
     return FUSB302_SUCCESS;
 }
 
-static FUSB302_ret_t FUSB302_state_unattached(struct FUSB302_dev_t *dev, FUSB302_event_t * events)
+static FUSB302_ret_t FUSB302_state_unattached(FUSB302_dev_t *dev, FUSB302_event_t * events)
 {
     REG_READ(ADDRESS_STATUS0, &REG_STATUS0, 1);
     if (REG_STATUS0 & VBUSOK) {
@@ -338,7 +350,7 @@ static FUSB302_ret_t FUSB302_state_unattached(struct FUSB302_dev_t *dev, FUSB302
     return FUSB302_SUCCESS;
 }
 
-static FUSB302_ret_t FUSB302_state_attached(struct FUSB302_dev_t *dev, FUSB302_event_t * events)
+static FUSB302_ret_t FUSB302_state_attached(FUSB302_dev_t *dev, FUSB302_event_t * events)
 {
     REG_READ(ADDRESS_STATUS0A, &REG_STATUS0A, 7);
     dev->interrupta |= REG_INTERRUPTA;
@@ -381,7 +393,7 @@ static FUSB302_ret_t FUSB302_state_attached(struct FUSB302_dev_t *dev, FUSB302_e
     return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_init(struct FUSB302_dev_t *dev)
+FUSB302_ret_t FUSB302_init(FUSB302_dev_t *dev)
 {
     if (dev->i2c_address == 0) {
         dev->err_msg = FUSB302_ERR_MSG("Invalid i2c address");
@@ -453,21 +465,21 @@ FUSB302_ret_t FUSB302_init(struct FUSB302_dev_t *dev)
 	return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_pd_reset(struct FUSB302_dev_t *dev)
+FUSB302_ret_t FUSB302_pd_reset(FUSB302_dev_t *dev)
 {
     uint8_t reg = PD_RESET;
     REG_WRITE(ADDRESS_RESET, &reg, 1);
     return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_pdwn_cc(struct FUSB302_dev_t *dev, uint8_t enable)
+FUSB302_ret_t FUSB302_pdwn_cc(FUSB302_dev_t *dev, uint8_t enable)
 {
     REG_SWITCHES0 = enable ? (PDWN1 | PDWN2) : 0;
 	REG_WRITE(ADDRESS_SWITCHES0, &REG_SWITCHES0, 1);
     return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_get_ID(struct FUSB302_dev_t *dev, uint8_t * version_ID, uint8_t * revision_ID)
+FUSB302_ret_t FUSB302_get_ID(FUSB302_dev_t *dev, uint8_t * version_ID, uint8_t * revision_ID)
 {
     if (dev && (REG_DEVICE_ID & 0x80)) {
         if (version_ID) {
@@ -481,7 +493,7 @@ FUSB302_ret_t FUSB302_get_ID(struct FUSB302_dev_t *dev, uint8_t * version_ID, ui
     return FUSB302_ERR_PARAM;
 }
 
-FUSB302_ret_t FUSB302_get_cc(struct FUSB302_dev_t *dev, uint8_t *cc1, uint8_t *cc2)
+FUSB302_ret_t FUSB302_get_cc(FUSB302_dev_t *dev, uint8_t *cc1, uint8_t *cc2)
 {
     if (cc1) {
         *cc1 = dev->cc1;
@@ -492,7 +504,7 @@ FUSB302_ret_t FUSB302_get_cc(struct FUSB302_dev_t *dev, uint8_t *cc1, uint8_t *c
 	return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_get_vbus_level(struct FUSB302_dev_t *dev, uint8_t *vbus)
+FUSB302_ret_t FUSB302_get_vbus_level(FUSB302_dev_t *dev, uint8_t *vbus)
 {
     uint8_t reg_control;
     REG_READ(ADDRESS_STATUS0, &reg_control, 1);
@@ -500,7 +512,7 @@ FUSB302_ret_t FUSB302_get_vbus_level(struct FUSB302_dev_t *dev, uint8_t *vbus)
 	return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_get_message(struct FUSB302_dev_t *dev, uint16_t * header, uint32_t * data)
+FUSB302_ret_t FUSB302_get_message(FUSB302_dev_t *dev, uint16_t * header, uint32_t * data)
 {
     if (header) {
         *header = dev->rx_header;
@@ -512,7 +524,7 @@ FUSB302_ret_t FUSB302_get_message(struct FUSB302_dev_t *dev, uint16_t * header, 
 	return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_tx_sop(struct FUSB302_dev_t *dev, uint16_t header, const uint32_t *data)
+FUSB302_ret_t FUSB302_tx_sop(FUSB302_dev_t *dev, uint16_t header, const uint32_t *data)
 {
     uint8_t buf[40];
     uint8_t * pbuf = buf;
@@ -540,7 +552,7 @@ FUSB302_ret_t FUSB302_tx_sop(struct FUSB302_dev_t *dev, uint16_t header, const u
 	return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_tx_hard_reset(struct FUSB302_dev_t *dev)
+FUSB302_ret_t FUSB302_tx_hard_reset(FUSB302_dev_t *dev)
 {
     uint8_t reg_control = REG_CONTROL3;
     reg_control |= SEND_HARDRESET;
@@ -551,9 +563,9 @@ FUSB302_ret_t FUSB302_tx_hard_reset(struct FUSB302_dev_t *dev)
     return FUSB302_SUCCESS;
 }
 
-FUSB302_ret_t FUSB302_alert(struct FUSB302_dev_t *dev, FUSB302_event_t * events)
+FUSB302_ret_t FUSB302_alert(FUSB302_dev_t *dev, FUSB302_event_t * events)
 {
-    FUSB302_ret_t (* const handler[]) (struct FUSB302_dev_t *, FUSB302_event_t *) = {
+    FUSB302_ret_t (* const handler[]) (FUSB302_dev_t *, FUSB302_event_t *) = {
         FUSB302_state_unattached,
         FUSB302_state_attached
     };
