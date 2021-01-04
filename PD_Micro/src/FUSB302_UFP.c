@@ -2,12 +2,16 @@
 /**
  * FUSB302_UFP.c
  *
- *  Created on: Nov 16, 2020
+ *  Updated on: Jan 4, 2021
  *      Author: Ryan Ma
  *
  * Minimalist USB PD implement with only UFP(device) functionality
  * Requires only stdint.h and string.h
  * No use of bit-field for better cross-platform compatibility
+ *
+ * FUSB302 can support PD3.0 with limitations and workarounds
+ * - Do not have enough FIFO for unchunked message, use chunked message instead
+ * - VBUS sense low threshold at 4V, disable vbus_sense if request PPS below 4V
  * 
  */
  
@@ -355,7 +359,7 @@ static FUSB302_ret_t FUSB302_state_attached(FUSB302_dev_t *dev, FUSB302_event_t 
     REG_READ(ADDRESS_STATUS0A, &REG_STATUS0A, 7);
     dev->interrupta |= REG_INTERRUPTA;
     dev->interruptb |= REG_INTERRUPTB;    
-    if ((REG_STATUS0 & VBUSOK) == 0) {
+    if (dev->vbus_sense && ((REG_STATUS0 & VBUSOK) == 0)) {
         /* reset cc pins to pull down */
         REG_SWITCHES0 = PDWN1 | PDWN2;
         REG_SWITCHES1 = SPECREV0;
@@ -460,7 +464,8 @@ FUSB302_ret_t FUSB302_init(FUSB302_dev_t *dev)
     /* Power on, enable VUSB detection */
     REG_POWER = PWR_BANDGAP | PWR_RECEIVER | PWR_MEASURE;
     REG_WRITE(ADDRESS_POWER, &REG_POWER, 1);
-
+    
+    dev->vbus_sense = 1;
     dev->err_msg = FUSB302_ERR_MSG("");
 	return FUSB302_SUCCESS;
 }
@@ -476,6 +481,20 @@ FUSB302_ret_t FUSB302_pdwn_cc(FUSB302_dev_t *dev, uint8_t enable)
 {
     REG_SWITCHES0 = enable ? (PDWN1 | PDWN2) : 0;
 	REG_WRITE(ADDRESS_SWITCHES0, &REG_SWITCHES0, 1);
+    return FUSB302_SUCCESS;
+}
+
+FUSB302_ret_t FUSB302_set_vbus_sense(FUSB302_dev_t *dev, uint8_t enable)
+{
+    if (dev->vbus_sense != enable) {
+        if (enable) {
+            REG_MASK &= ~M_VBUSOK;  /* enable VBUSOK interrupt */
+        } else { 
+            REG_MASK |= M_VBUSOK;   /* disable VBUSOK interrupt */
+        }
+        REG_WRITE(ADDRESS_MASK, &REG_MASK, 1);
+        dev->vbus_sense = enable;
+    }
     return FUSB302_SUCCESS;
 }
 

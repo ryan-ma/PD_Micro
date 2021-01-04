@@ -2,12 +2,16 @@
 /**
  * FUSB302_UFP.h
  *
- *  Created on: Nov 16, 2020
+ *  Updated on: Jan 4, 2021
  *      Author: Ryan Ma
  *
  * Minimalist USB PD implement with only UFP(device) functionality
  * Requires only stdint.h and string.h
  * No use of bit-field for better cross-platform compatibility
+ *
+ * FUSB302 can support PD3.0 with limitations and workarounds
+ * - Do not have enough FIFO for unchunked message, use chunked message instead
+ * - VBUS sense low threshold at 4V, disable vbus_sense if request PPS below 4V
  * 
  */
 
@@ -50,7 +54,8 @@ typedef struct {
     uint8_t interruptb;
     uint8_t cc1;
     uint8_t cc2;
-    uint8_t state;    
+    uint8_t state;
+    uint8_t vbus_sense;
 } FUSB302_dev_t;
 
 static inline const char * FUSB302_get_last_err_msg(FUSB302_dev_t *dev) { return dev->err_msg; }
@@ -58,6 +63,7 @@ static inline const char * FUSB302_get_last_err_msg(FUSB302_dev_t *dev) { return
 FUSB302_ret_t FUSB302_init            (FUSB302_dev_t *dev);
 FUSB302_ret_t FUSB302_pd_reset        (FUSB302_dev_t *dev);
 FUSB302_ret_t FUSB302_pdwn_cc         (FUSB302_dev_t *dev, uint8_t enable);
+FUSB302_ret_t FUSB302_set_vbus_sense  (FUSB302_dev_t *dev, uint8_t enable);
 FUSB302_ret_t FUSB302_get_ID          (FUSB302_dev_t *dev, uint8_t *version_ID, uint8_t *revision_ID);
 FUSB302_ret_t FUSB302_get_cc          (FUSB302_dev_t *dev, uint8_t *cc1, uint8_t *cc2);
 FUSB302_ret_t FUSB302_get_vbus_level  (FUSB302_dev_t *dev, uint8_t *vbus);

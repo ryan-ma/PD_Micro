@@ -2,13 +2,15 @@
 /**
  * PD_UFP.h
  *
- *  Created on: Nov 16, 2020
+ *  Updated on: Jan 4, 2021
  *      Author: Ryan Ma
  *
  * Minimalist USB PD Ardunio Library for PD Micro board
  * Only support UFP(device) functionality
  * Requires FUSB302_UFP.h, PD_UFP_Protocol.h and Standard Arduino Library
  *
+ * Support PD3.0 PPS
+ * 
  */
 
 #ifndef PD_UFP_H
@@ -20,9 +22,6 @@ extern "C" {
     #include "FUSB302_UFP.h"
     #include "PD_UFP_Protocol.h"
 }
-
-#define PD_V(v) ((uint16_t)(v * 20))
-#define PD_A(a) ((uint16_t)(a * 100))
 
 enum {
     PD_UFP_VOLTAGE_LED_OFF      = 0,
@@ -44,29 +43,45 @@ enum {
 };
 typedef uint8_t PD_UFP_CURRENT_LED_t;
 
+enum {
+    STATUS_POWER_NA = 0,
+    STATUS_POWER_TYP,
+    STATUS_POWER_PPS
+};
+typedef uint8_t status_power_t;
+
 class PD_UFP_c
 {
     public:
         PD_UFP_c();
-        void init(enum PD_power_option_t power_option);
+        void init(enum PD_power_option_t power_option = PD_POWER_OPTION_MAX_5V);
+        void init_PPS(uint16_t PPS_voltage, uint8_t PPS_current, enum PD_power_option_t power_option = PD_POWER_OPTION_MAX_5V);
+        
         void run(void);
-        bool is_power_ready(void);
+        bool is_power_ready(void) { return status_power == STATUS_POWER_TYP; }
+        bool is_PPS_ready(void)   { return status_power == STATUS_POWER_PPS; }
         
-        uint16_t get_voltage(void);     // Voltage in 50mV units
-        uint16_t get_current(void);     // Current in 10mA units
-        
+        bool is_ps_transition(void) { return send_request || wait_ps_rdy; }
+
+        uint16_t get_voltage(void) { return ready_voltage; }    // Voltage in 50mV units, 20mV(PPS)
+        uint16_t get_current(void) { return ready_current; }    // Current in 10mA units, 50mA(PPS)
+
         void set_output(uint8_t enable);
         void set_led(uint8_t enable);
         void set_led(PD_UFP_VOLTAGE_LED_t index_v, PD_UFP_CURRENT_LED_t index_a);
         void blink_led(uint16_t period);
         
+        bool set_PPS(uint16_t PPS_voltage, uint8_t PPS_current);
         void set_power_option(enum PD_power_option_t power_option);
         void print_status(void);
-        
+
+        void clock_prescale_set(uint8_t prescaler);
+
     private:
         void handle_protocol_event(PD_protocol_event_t events);
         void handle_FUSB302_event(FUSB302_event_t events);
         bool timer(void);
+        void set_default_power(void);
         // Device
         FUSB302_dev_t FUSB302;
         PD_protocol_t protocol;
@@ -80,23 +95,34 @@ class PD_UFP_c
         uint16_t period_led_blink;
         PD_UFP_VOLTAGE_LED_t led_voltage;
         PD_UFP_CURRENT_LED_t led_current;
+        void calculate_led(uint16_t voltage, uint16_t current);
+        void calculate_led_pps(uint16_t PPS_voltage, uint8_t PPS_current);
         void update_voltage_led(PD_UFP_VOLTAGE_LED_t index);
         void update_current_led(PD_UFP_CURRENT_LED_t index);
         void handle_led(void);
+        // PPS setup
+        uint16_t PPS_voltage_next;
         // Status
         uint8_t status_initialized;
         uint8_t status_src_cap_received;
-        uint8_t status_power_ready;
-        // Timer and counter for PD Policy 
+        status_power_t status_power;
+        // Timer and counter for PD Policy
+        uint16_t clock_ms(void);
         uint16_t time_polling;
         uint16_t time_wait_src_cap;
-        uint8_t wait_src_cap;
+        uint16_t time_wait_ps_rdy;
+        uint16_t time_PPS_request;
         uint8_t get_src_cap_retry_count;
+        uint8_t wait_src_cap;
+        uint8_t wait_ps_rdy;
+        uint8_t send_request;
+        uint8_t clock_prescaler;
         // Status output
         uint8_t print_dev;
         uint8_t print_cc;
         uint8_t print_src_cap;
-        uint8_t print_power_ready;
+        uint8_t print_request_reject;
+        status_power_t print_power;
 };
 
 #endif
