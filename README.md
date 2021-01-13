@@ -150,6 +150,30 @@ The library turn on voltage LED according to the following table
 | >= 15V && < 20V | 15V | 
 | >= 20 | 20V | 
 
+# Logging
+The library can log library status, source capabilities, protocol packets name, with timestamps in the millisecond step to the serial port.
+
+<img src="images/pd-micro-pd-status-log.png" alt="serial" width="400">
+
+To use it, initialize hardware serial1 in setup.
+```
+void setup() {
+  Serial1.begin(115200);
+  ...
+```
+call `PD_UFP.print_status(Serial1)` inside `loop()`.
+```
+void loop() {
+  PD_UFP.run();
+  PD_UFP.print_status(Serial1);
+  ...
+```
+Connect Pin 1 (PD3 / UART TX) and GND to external USB to UART to read serial messages. 
+<img src="images/pd-micro-pinout-serial.png" alt="serial" width="200">
+
+PD Micro can be converted to serial passthrough mode and use it as USB to UART. I included these Arduino sketch examples in <a href="/examples">examples</a> folder.
+
+
 # Bootloader
 PD Micro uses `Caterina-promicro16.hex` bootloader provided by Sparkfun. Program it by `avrdude` and set the corresponding `efuse`.
 ```

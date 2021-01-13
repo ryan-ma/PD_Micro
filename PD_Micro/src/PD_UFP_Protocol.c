@@ -2,7 +2,7 @@
 /**
  * PD_UFP_Protocol.c
  *
- *  Updated on: Jan 4, 2021
+ *  Updated on: Jan 13, 2021
  *      Author: Ryan Ma
  *
  * Minimalist USB PD implement with only UFP(device) functionality
@@ -22,19 +22,19 @@
 #include <string.h>
 #include "PD_UFP_Protocol.h"
 
-#define PD_SPECIFICATION_REVISION       0x2
+#define PD_SPECIFICATION_REVISION           0x2
 
-#define PD_CONTROL_MSG_TYPE_ACCEPT      0x3
-#define PD_CONTROL_MSG_TYPE_REJECT      0x4
-#define PD_CONTROL_MSG_TYPE_GET_SRC_CAP 0x7
-#define PD_CONTROL_MSG_TYPE_NOT_SUPPORT 0x10
+#define PD_CONTROL_MSG_TYPE_ACCEPT          0x3
+#define PD_CONTROL_MSG_TYPE_REJECT          0x4
+#define PD_CONTROL_MSG_TYPE_GET_SRC_CAP     0x7
+#define PD_CONTROL_MSG_TYPE_NOT_SUPPORT     0x10
+#define PD_CONTROL_MSG_TYPE_GET_PPS_STATUS  0x14
 
-#define PD_DATA_MSG_TYPE_REQUEST        0x2
-#define PD_DATA_MSG_TYPE_SINK_CAP       0x4
-#define PD_DATA_MSG_TYPE_VENDOR_DEFINED 0xF
+#define PD_DATA_MSG_TYPE_REQUEST            0x2
+#define PD_DATA_MSG_TYPE_SINK_CAP           0x4
+#define PD_DATA_MSG_TYPE_VENDOR_DEFINED     0xF
 
-
-#define T(name)     name
+#define PD_EXT_MSG_TYPE_SINK_CAP_EXT        0xF
 
 typedef struct {
     uint8_t type;
@@ -55,72 +55,120 @@ struct PD_msg_state_t {
     bool (*responder)(PD_protocol_t * p, uint16_t * header, uint32_t * obj);
 };
 
+/* Optimize RAM usage on AVR MCU by allocate const in PROGMEM */
+#if defined(__AVR__)
+#include <avr/pgmspace.h>
+#define SET_MSG_STAGE(d, s) do { static struct PD_msg_state_t m; memcpy_P(&m, s, sizeof(struct PD_msg_state_t)); d = &m; } while (0)
+#define SET_MSG_NAME(d, s)  do { static char n[16]; strncpy_P(n, s, 15); d = n; } while (0)
+#define COPY_PDO(d, s)      do { memcpy_P(&d, &s, 4); } while (0)
+#else
+#define PROGMEM
+#define SET_MSG_STAGE(d, s) do { d = s; } while (0)
+#define SET_MSG_NAME(d, s)  do { d = s; } while (0)
+#define COPY_PDO(d, s)      do { d = s; } while (0)
+#endif
+
+#define T(name) static const char str_ ## name [] PROGMEM = #name
+
 static void handler_good_crc   (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
 static void handler_goto_min   (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
 static void handler_accept     (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
 static void handler_reject     (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
 static void handler_ps_rdy     (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
 static void handler_source_cap (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
+static void handler_BIST       (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
+static void handler_alert      (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
 static void handler_vender_def (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
+static void handler_PPS_Status (PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events);
 
 static bool responder_get_sink_cap  (PD_protocol_t * p, uint16_t * header, uint32_t * obj);
 static bool responder_reject        (PD_protocol_t * p, uint16_t * header, uint32_t * obj);
 static bool responder_soft_reset    (PD_protocol_t * p, uint16_t * header, uint32_t * obj);
 static bool responder_source_cap    (PD_protocol_t * p, uint16_t * header, uint32_t * obj);
 static bool responder_vender_def    (PD_protocol_t * p, uint16_t * header, uint32_t * obj);
+static bool responder_sink_cap_ext  (PD_protocol_t * p, uint16_t * header, uint32_t * obj);
 static bool responder_not_support   (PD_protocol_t * p, uint16_t * header, uint32_t * obj);
 
-static const struct PD_msg_state_t ctrl_msg_list[] = {
-    {.name = T("[C0]"),         .handler = 0,                   .responder = 0},
-    {.name = T("GoodCRC"),      .handler = handler_good_crc,    .responder = 0},
-    {.name = T("GotoMin"),      .handler = handler_goto_min,    .responder = 0},
-    {.name = T("Accept"),       .handler = handler_accept,      .responder = 0},
-    {.name = T("Reject"),       .handler = handler_reject,      .responder = 0},
-    {.name = T("Ping"),         .handler = 0,                   .responder = 0},
-    {.name = T("PS_RDY"),       .handler = handler_ps_rdy,      .responder = 0},
-    {.name = T("Get_Src_Cap"),  .handler = 0,                   .responder = responder_not_support},
-    {.name = T("Get_Sink_Cap"), .handler = 0,                   .responder = responder_get_sink_cap},
-    {.name = T("DR_Swap"),      .handler = 0,                   .responder = responder_reject},
-    {.name = T("PR_Swap"),      .handler = 0,                   .responder = responder_not_support},
-    {.name = T("VCONN_Swap"),   .handler = 0,                   .responder = responder_reject},
-    {.name = T("Wait"),         .handler = 0,                   .responder = 0},
-    {.name = T("Soft_Rst"),     .handler = 0,                   .responder = responder_soft_reset},
-    {.name = T("Dat_Rst"),      .handler = 0,                   .responder = 0},
-    {.name = T("Dat_Rst_Cpt"),  .handler = 0,                   .responder = 0},
+T(C0); T(GoodCRC); T(GotoMin); T(Accept); T(Reject); T(Ping); T(PS_RDY); T(Get_Src_Cap);
+T(Get_Sink_Cap); T(DR_Swap); T(PR_Swap); T(VCONN_Swap); T(Wait); T(Soft_Rst); T(Dat_Rst); T(Dat_Rst_Cpt);
+T(NS); T(Get_Src_Ext); T(Get_Stat); T(FR_Swap); T(Get_PPS_Stat); T(Get_CC); T(Get_Sink_Ext); T(C_R);
+
+static const struct PD_msg_state_t ctrl_msg_list[] PROGMEM = {
+    {.name = str_C0,            .handler = 0,                   .responder = 0},
+    {.name = str_GoodCRC,       .handler = handler_good_crc,    .responder = 0},
+    {.name = str_GotoMin,       .handler = handler_goto_min,    .responder = 0},
+    {.name = str_Accept,        .handler = handler_accept,      .responder = 0},
+    {.name = str_Reject,        .handler = handler_reject,      .responder = 0},
+    {.name = str_Ping,          .handler = 0,                   .responder = 0},
+    {.name = str_PS_RDY,        .handler = handler_ps_rdy,      .responder = 0},
+    {.name = str_Get_Src_Cap,   .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Get_Sink_Cap,  .handler = 0,                   .responder = responder_get_sink_cap},
+    {.name = str_DR_Swap,       .handler = 0,                   .responder = responder_reject},
+    {.name = str_PR_Swap,       .handler = 0,                   .responder = responder_not_support},
+    {.name = str_VCONN_Swap,    .handler = 0,                   .responder = responder_reject},
+    {.name = str_Wait,          .handler = 0,                   .responder = 0},
+    {.name = str_Soft_Rst,      .handler = 0,                   .responder = responder_soft_reset},
+    {.name = str_Dat_Rst,       .handler = 0,                   .responder = 0},
+    {.name = str_Dat_Rst_Cpt,   .handler = 0,                   .responder = 0},
     
-    {.name = T("NS"),           .handler = 0,                   .responder = 0},
-    {.name = T("Get_Src_Ext"),  .handler = 0,                   .responder = responder_not_support},
-    {.name = T("Get_Stat"),     .handler = 0,                   .responder = responder_not_support},
-    {.name = T("FR_Swap"),      .handler = 0,                   .responder = responder_not_support},
-    {.name = T("Get_PPS_Stat"), .handler = 0,                   .responder = responder_not_support},
-    {.name = T("Get_CC"),       .handler = 0,                   .responder = responder_not_support},
-    {.name = T("Get_Sink_Ext"), .handler = 0,                   .responder = 0},
-    {.name = T("[C_R]"),        .handler = 0,                   .responder = responder_not_support},
+    {.name = str_NS,            .handler = 0,                   .responder = 0},
+    {.name = str_Get_Src_Ext,   .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Get_Stat,      .handler = 0,                   .responder = responder_not_support},
+    {.name = str_FR_Swap,       .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Get_PPS_Stat,  .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Get_CC,        .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Get_Sink_Ext,  .handler = 0,                   .responder = responder_sink_cap_ext},
+    {.name = str_C_R,           .handler = 0,                   .responder = responder_not_support},
 };
 
-static const struct PD_msg_state_t data_msg_list[] = {
-    {.name = T("[D0]"),         .handler = 0,                   .responder = 0},
-    {.name = T("Src_Cap"),      .handler = handler_source_cap,  .responder = responder_source_cap},
-    {.name = T("Request"),      .handler = 0,                   .responder = 0},
-    {.name = T("BIST"),         .handler = 0,                   .responder = 0},
-    {.name = T("Sink_Cap"),     .handler = 0,                   .responder = 0},
-    {.name = T("Bat_Stat"),     .handler = 0,                   .responder = 0},
-    {.name = T("Alert"),        .handler = 0,                   .responder = 0},
-    {.name = T("Get_CI"),       .handler = 0,                   .responder = 0},
-    {.name = T("Enter_USB"),    .handler = 0,                   .responder = 0},
-    {.name = T("[D9]"),         .handler = 0,                   .responder = 0},
-    {.name = T("[D10]"),        .handler = 0,                   .responder = 0},
-    {.name = T("[D11]"),        .handler = 0,                   .responder = 0},
-    {.name = T("[D12]"),        .handler = 0,                   .responder = 0},
-    {.name = T("[D13]"),        .handler = 0,                   .responder = 0},
-    {.name = T("[D14]"),        .handler = 0,                   .responder = 0},
-    {.name = T("VDM"),          .handler = handler_vender_def,  .responder = responder_vender_def},
-    {.name = T("[D_R]"),        .handler = 0,                   .responder = responder_not_support},
+T(D0); T(Src_Cap); T(Request); T(BIST); T(Sink_Cap); T(Bat_Stat); T(Alert); T(Get_CI);
+T(Enter_USB); T(D9); T(D10); T(D11); T(D12); T(D13); T(D14); T(VDM);
+T(D_R); 
+
+static const struct PD_msg_state_t data_msg_list[] PROGMEM = {
+    {.name = str_D0,            .handler = 0,                   .responder = 0},
+    {.name = str_Src_Cap,       .handler = handler_source_cap,  .responder = responder_source_cap},
+    {.name = str_Request,       .handler = 0,                   .responder = responder_not_support},
+    {.name = str_BIST,          .handler = handler_BIST,        .responder = 0},
+    {.name = str_Sink_Cap,      .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Bat_Stat,      .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Alert,         .handler = handler_alert,       .responder = 0},
+    {.name = str_Get_CI,        .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Enter_USB,     .handler = 0,                   .responder = 0},
+    {.name = str_D9,            .handler = 0,                   .responder = 0},
+    {.name = str_D10,           .handler = 0,                   .responder = 0},
+    {.name = str_D11,           .handler = 0,                   .responder = 0},
+    {.name = str_D12,           .handler = 0,                   .responder = 0},
+    {.name = str_D13,           .handler = 0,                   .responder = 0},
+    {.name = str_D14,           .handler = 0,                   .responder = 0},
+    {.name = str_VDM,           .handler = handler_vender_def,  .responder = responder_vender_def},
+
+    {.name = str_D_R,           .handler = 0,                   .responder = responder_not_support},
 };
 
-/* handle all extended message by responding Not_Supported Message*/
-static const struct PD_msg_state_t ext_msg_list[] = {
-    {.name = T("[EXT]"),        .handler = 0,                   .responder = responder_not_support},
+T(E0); T(Src_Cap_Ext); T(Status); T(Get_Bat_cap); T(Get_Bat_Stat); T(Bat_Cap); T(Get_Mfg_Info); T(Mfg_Info);
+T(Sec_Request); T(Sec_Response); T(FU_request); T(FU_Response); T(PPS_Stat); T(Country_Info); T(Country_Code); T(Sink_Cap_Ext);
+T(E_R);
+
+static const struct PD_msg_state_t ext_msg_list[] PROGMEM = {
+    {.name = str_E0,            .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Src_Cap_Ext,   .handler = 0,                   .responder = 0},
+    {.name = str_Status,        .handler = 0,                   .responder = 0},
+    {.name = str_Get_Bat_cap,   .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Get_Bat_Stat,  .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Bat_Cap,       .handler = 0,                   .responder = 0},
+    {.name = str_Get_Mfg_Info,  .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Mfg_Info,      .handler = 0,                   .responder = 0},
+    {.name = str_Sec_Request,   .handler = 0,                   .responder = responder_not_support},
+    {.name = str_Sec_Response,  .handler = 0,                   .responder = 0},
+    {.name = str_FU_request,    .handler = 0,                   .responder = responder_not_support},
+    {.name = str_FU_Response,   .handler = 0,                   .responder = 0},
+    {.name = str_PPS_Stat,      .handler = handler_PPS_Status,  .responder = 0},
+    {.name = str_Country_Info,  .handler = 0,                   .responder = 0},
+    {.name = str_Country_Code,  .handler = 0,                   .responder = 0},
+    {.name = str_Sink_Cap_Ext,  .handler = 0,                   .responder = responder_not_support},
+
+    {.name = str_E_R,           .handler = 0,                   .responder = responder_not_support},
 };
 
 static const PD_power_option_setting_t power_option_setting[8] = {
@@ -179,13 +227,25 @@ static void parse_header(PD_msg_header_info_t * info, uint16_t header)
 
 static uint16_t generate_header(PD_protocol_t * p, uint8_t type, uint8_t obj_count)
 {
-    uint16_t data = ((uint32_t)type << 0) |                       /*   4...0  Message Type */
-                    ((uint32_t)PD_SPECIFICATION_REVISION << 6) |  /*   7...6  Specification Revision */
-                    ((uint32_t)p->message_id << 9) |              /*  11...9  MessageID */
-                    ((uint32_t)obj_count << 12);                  /* 14...12  Number of Data Objects */
-    p->tx_msg_name = obj_count ? data_msg_list[type].name : ctrl_msg_list[type].name;
-    p->tx_msg_header = data;
-    return data;
+    /* Reference: 6.2.1.1 Message Header */ 
+    uint16_t h = ((uint16_t)type << 0) |                      /*   4...0  Message Type */
+                 ((uint16_t)PD_SPECIFICATION_REVISION << 6) | /*   7...6  Specification Revision */
+                 ((uint16_t)p->message_id << 9) |             /*  11...9  MessageID */
+                 ((uint16_t)obj_count << 12);                 /* 14...12  Number of Data Objects */
+    p->tx_msg_header = h;
+    return h;
+}
+
+static uint16_t generate_header_ext(PD_protocol_t * p, uint8_t type, uint8_t data_size, uint32_t * obj)
+{
+    uint16_t h = generate_header(p, type, (data_size + 5) >> 2); /* set obj_count to fit ext header and data */
+    h |= (uint16_t)1 << 15;     /* Set extended field */
+    /* Reference: 6.2.1.2 Extended Message Headerr */ 
+    obj[0] |= ((uint16_t)data_size << 0) |  /*   8...0  ata Size */
+              /* Assume short message, set Chunk Number and Request Chunk to 0 */
+              ((uint16_t)1 << 15);          /*      15  Chunked */
+    p->tx_msg_header = h;
+    return h;
 }
 
 static void handler_good_crc(PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events)
@@ -239,9 +299,31 @@ static void handler_source_cap(PD_protocol_t * p, uint16_t header, uint32_t * ob
     }
 }
 
+static void handler_BIST(PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events)
+{
+    // TODO: implement BIST
+}
+
+static void handler_alert(PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events)
+{
+    // TODO: implement alert
+}
+
 static void handler_vender_def(PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events)
 {
     // TODO: implement VDM parsing
+}
+
+static void handler_PPS_Status(PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events)
+{
+    /* Handle chunked Extended message,  Offset 2 byte for Extended Message Header */
+    p->PPSSDB[0] = (obj[0] >> 16) & 0xFF;
+    p->PPSSDB[1] = (obj[0] >> 24) & 0xFF;
+    p->PPSSDB[2] = (obj[1] >>  0) & 0xFF;
+    p->PPSSDB[3] = (obj[1] >>  8) & 0xFF;
+    if (events) {
+        *events |= PD_PROTOCOL_EVENT_PPS_STATUS;
+    }
 }
 
 static bool responder_get_sink_cap(PD_protocol_t * p, uint16_t * header, uint32_t * obj)
@@ -255,6 +337,50 @@ static bool responder_get_sink_cap(PD_protocol_t * p, uint16_t * header, uint32_
     *obj = data; /* Only implement 5V 1A Fix supply PDO. Source rarely request sink cap */
     *header = generate_header(p, PD_DATA_MSG_TYPE_SINK_CAP, 1);
     return true;
+}
+
+static bool responder_sink_cap_ext(PD_protocol_t * p, uint16_t * header, uint32_t * obj)
+{
+    /* Reference: 6.5.13 Sink_Capabilities_Extended Message 
+                  6.12.3 Applicability of Extended Messages  (Normative; Shall be supported) */
+    #define SINK_CAP_VID                0
+    #define SINK_CAP_PID                0
+    #define SINK_CAP_XID                0       /* If the vendor does not have an XID, then it Shall return zero */
+    #define SINK_CAP_FW_Version         1
+    #define SINK_CAP_HW_Version         1
+    #define SINK_CAP_SKEDB_Version      1
+    #define SINK_CAP_SINK_MODE          0x3     /* Bit 0: PPS charging supported, Bit 1: VBUS powered */
+    #define SINK_CAP_SINK_MIN_PDP       5       /* Minimum     PD Power in Watt */
+    #define SINK_CAP_SINK_OP_PDP        5       /* Operational PD Power in Watt */
+    #define SINK_CAP_SINK_MAX_PDP       100     /* Maximum     PD Power in Watt */
+    static const uint32_t SKEDB[6] PROGMEM = { /* 2-byte header + 21-byte data, chunked to 6 PDO */
+    /* PDO[0], data byte  0...1  */
+        /* 16-bit LSB is reserved for Extended Message Header */
+        ((uint32_t)SINK_CAP_VID << 16),             /* Byte  0...1  VID */
+    /* PDO[1], data byte  2...5  */
+        ((uint32_t)SINK_CAP_PID << 0) |             /* Byte  2...3  PID */
+        (((uint32_t)SINK_CAP_XID & 0xFF) << 16),    /* Byte  4...5  XID */
+    /* PDO[2], data byte  6...9  */
+        (((uint32_t)SINK_CAP_XID >> 16) << 0) |     /* Byte  6...7  XID */
+        ((uint32_t)SINK_CAP_FW_Version << 16) |     /* Byte      8  FW Version */
+        ((uint32_t)SINK_CAP_HW_Version << 24),      /* Byte      9  HW Version */
+    /* PDO[3], data byte 10...13 */
+        ((uint32_t)SINK_CAP_SKEDB_Version << 0),    /* Byte     10  SKEDB Version */
+        /* Not set Byte 11 Load Step, Byte 13..12 Sink Load Characteristics */
+    /* PDO[4], data byte 14...17 */
+        /* Not set Byte 14 Compliance, Byte 15 Touch Temp, Byte 16 Battery Info */
+        ((uint32_t)SINK_CAP_SINK_MODE << 24),       /* Byte     17  Sink Modes */
+    /* PDO[5], data byte 18...20 */
+        ((uint32_t)SINK_CAP_SINK_MIN_PDP << 0) |    /* Byte     18  Minimum PDP */
+        ((uint32_t)SINK_CAP_SINK_OP_PDP << 8) |     /* Byte     19  Operational PDP */
+        ((uint32_t)SINK_CAP_SINK_MAX_PDP << 16)     /* Byte     20  Maximum PDP */
+    };
+    uint8_t i;
+    for (i = 0; i < 6; i++) {
+        COPY_PDO(obj[i], SKEDB[i]);
+    }
+    *header = generate_header_ext(p, PD_EXT_MSG_TYPE_SINK_CAP_EXT, 21, obj);
+    return false;
 }
 
 static bool responder_reject(PD_protocol_t * p, uint16_t * header, uint32_t * obj)
@@ -305,12 +431,18 @@ static bool responder_vender_def(PD_protocol_t * p, uint16_t * header, uint32_t 
     return false;
 }
 
-static bool PD_protocol_get_msg_info(const char * name, uint16_t header, PD_msg_info_t * msg_info)
+static bool PD_protocol_get_msg_info(uint16_t header, PD_msg_info_t * msg_info)
 {
     PD_msg_header_info_t h;
     parse_header(&h, header);
     if (msg_info) {
-        msg_info->name = name;
+        uint8_t name_ref = h.type;
+        if (header & 0x8000) {
+            name_ref |= 0x80;
+        } else if (h.num_of_obj) {
+            name_ref |= 0x40;
+        }
+        msg_info->name_ref = name_ref;
         msg_info->id = h.id;
         msg_info->spec_rev = h.spec_rev;
         msg_info->num_of_obj = h.num_of_obj;
@@ -325,16 +457,18 @@ void PD_protocol_handle_msg(PD_protocol_t * p, uint16_t header, uint32_t * obj, 
     #define DATA_MSG_LIMIT  (sizeof(data_msg_list) / sizeof(data_msg_list[0]) - 1)
     #define CTRL_MSG_LIMIT  (sizeof(ctrl_msg_list) / sizeof(ctrl_msg_list[0]) - 1)
 
+    const struct PD_msg_state_t * state;
     PD_msg_header_info_t h;
     parse_header(&h, header);
     p->rx_msg_header = header;
     if ((header >> 15) & 0x1) {
-        p->msg_state = &ext_msg_list[h.type > EXT_MSG_LIMIT ? EXT_MSG_LIMIT : h.type];
+        state = &ext_msg_list[h.type > EXT_MSG_LIMIT ? EXT_MSG_LIMIT : h.type];
     } else if (h.num_of_obj) {
-        p->msg_state = &data_msg_list[h.type > DATA_MSG_LIMIT ? DATA_MSG_LIMIT : h.type];
+        state = &data_msg_list[h.type > DATA_MSG_LIMIT ? DATA_MSG_LIMIT : h.type];
     } else {
-        p->msg_state = &ctrl_msg_list[h.type > CTRL_MSG_LIMIT ? CTRL_MSG_LIMIT : h.type];
+        state =&ctrl_msg_list[h.type > CTRL_MSG_LIMIT ? CTRL_MSG_LIMIT : h.type];
     }
+    SET_MSG_STAGE(p->msg_state, state);
     if (p->msg_state->handler) {
         p->msg_state->handler(p, header, obj, events);
     }
@@ -342,7 +476,6 @@ void PD_protocol_handle_msg(PD_protocol_t * p, uint16_t header, uint32_t * obj, 
 
 bool PD_protocol_respond(PD_protocol_t * p, uint16_t * header, uint32_t * obj)
 {
-    p->tx_msg_name = "";
     if (p && p->msg_state && p->msg_state->responder && header && obj) {
         return p->msg_state->responder(p, (uint16_t *)header, obj);
     }
@@ -352,6 +485,11 @@ bool PD_protocol_respond(PD_protocol_t * p, uint16_t * header, uint32_t * obj)
 void PD_protocol_create_get_src_cap(PD_protocol_t * p, uint16_t * header)
 {
     *header = generate_header(p, PD_CONTROL_MSG_TYPE_GET_SRC_CAP, 0);
+}
+
+void PD_protocol_create_get_PPS_status(PD_protocol_t *p, uint16_t *header)
+{
+    *header = generate_header(p, PD_CONTROL_MSG_TYPE_GET_PPS_STATUS, 0);
 }
 
 void PD_protocol_create_request(PD_protocol_t * p, uint16_t * header, uint32_t * obj)
@@ -399,14 +537,38 @@ bool PD_protocol_get_power_info(PD_protocol_t * p, uint8_t index, PD_power_info_
     return false;
 }
 
+const char * PD_protocol_get_msg_name(uint8_t name_ref)
+{
+    const char * name;
+    const struct PD_msg_state_t * state;
+    uint8_t type = name_ref & 0x1F;
+    SET_MSG_STAGE(state, name_ref & 0x80 ? &ext_msg_list[type] : 
+                         name_ref & 0x40 ? &data_msg_list[type] : &ctrl_msg_list[type]);
+    SET_MSG_NAME(name, state->name);
+    return name;
+}
+
 bool PD_protocol_get_tx_msg_info(PD_protocol_t * p, PD_msg_info_t * msg_info)
 {
-    return p && PD_protocol_get_msg_info(p->tx_msg_name, p->tx_msg_header, msg_info);
+    return p && PD_protocol_get_msg_info(p->tx_msg_header, msg_info);
 }
 
 bool PD_protocol_get_rx_msg_info(PD_protocol_t * p, PD_msg_info_t * msg_info)
 {
-    return p && PD_protocol_get_msg_info(p->msg_state->name, p->rx_msg_header, msg_info);
+    return p && PD_protocol_get_msg_info(p->rx_msg_header, msg_info);
+}
+
+bool PD_protocol_get_PPS_status(PD_protocol_t *p, PPS_status_t * PPS_status)
+{
+    if (p && PPS_status) {
+        /* Reference: 6.5.10 PPS_Status Message */
+        PPS_status->output_voltage = ((uint16_t)p->PPSSDB[1] << 8) | p->PPSSDB[0];
+        PPS_status->output_current = p->PPSSDB[2];
+        PPS_status->flag_PTF = (p->PPSSDB[3] >> 1) & 0x3;   /* Bit 1 ... 2 */
+        PPS_status->flag_OMF = (p->PPSSDB[3] >> 3) & 0x1;   /* Bit 3 */
+        return true;
+    }
+    return false;
 }
 
 bool PD_protocol_set_power_option(PD_protocol_t * p, enum PD_power_option_t option)

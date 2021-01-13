@@ -2,7 +2,7 @@
 /**
  * PD_UFP.h
  *
- *  Updated on: Jan 4, 2021
+ *  Updated on: Jan 13, 2021
  *      Author: Ryan Ma
  *
  * Minimalist USB PD Ardunio Library for PD Micro board
@@ -15,10 +15,6 @@
  
 #include <stdint.h>
 #include <string.h>
-
-#include <Arduino.h>
-#include <Wire.h>
-#include <HardwareSerial.h>
 
 #include "PD_UFP.h"
 
@@ -37,7 +33,20 @@
 #define PIN_LED_VOLTAGE_3       23
 #define PIN_LED_VOLTAGE_4       11
 
-#define LOG(...)      do { char buf[80]; sprintf(buf, __VA_ARGS__); Serial.print(buf); } while(0)
+#define STATUS_LOG_MASK (sizeof(status_log) / sizeof(status_log[0]) - 1)
+
+enum {
+    STATUS_LOG_MSG_TX,
+    STATUS_LOG_MSG_RX,
+    STATUS_LOG_DEV,
+    STATUS_LOG_CC,
+    STATUS_LOG_SRC_CAP,
+    STATUS_LOG_POWER_READY,
+    STATUS_LOG_POWER_PPS_STARTUP,
+    STATUS_LOG_POWER_REJECT,
+    STATUS_LOG_LOAD_SW_ON,
+    STATUS_LOG_LOAD_SW_OFF,
+};
 
 static FUSB302_ret_t FUSB302_i2c_read(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t count)
 {
@@ -75,14 +84,14 @@ void PD_UFP_c::handle_protocol_event(PD_protocol_event_t events)
     if (events & PD_PROTOCOL_EVENT_SRC_CAP) {
         wait_src_cap = 0;
         get_src_cap_retry_count = 0;
-        print_src_cap = 1;
         wait_ps_rdy = 1;
         time_wait_ps_rdy = clock_ms();
+        status_log_push(STATUS_LOG_SRC_CAP);
     }
     if (events & PD_PROTOCOL_EVENT_REJECT) {
         if (wait_ps_rdy) {
             wait_ps_rdy = 0;
-            print_request_reject = 1;
+            status_log_push(STATUS_LOG_POWER_REJECT);
         }
     }    
     if (events & PD_PROTOCOL_EVENT_PS_RDY) {
@@ -99,11 +108,12 @@ void PD_UFP_c::handle_protocol_event(PD_protocol_event_t events)
                 PD_protocol_set_PPS(&protocol, PPS_voltage_next, ready_current, false);
                 PPS_voltage_next = 0;
                 send_request = 1;
+                status_log_push(STATUS_LOG_POWER_PPS_STARTUP);
             } else {
                 calculate_led_pps(ready_voltage, ready_current);
                 time_PPS_request = clock_ms();
                 status_power = STATUS_POWER_PPS;
-                print_power = STATUS_POWER_PPS;
+                status_log_push(STATUS_LOG_POWER_READY);
             }
         } else {
             FUSB302_set_vbus_sense(&FUSB302, 1);
@@ -111,7 +121,7 @@ void PD_UFP_c::handle_protocol_event(PD_protocol_event_t events)
             ready_current = p.max_i;
             calculate_led(ready_voltage, ready_current);
             status_power = STATUS_POWER_TYP;
-            print_power = STATUS_POWER_TYP;
+            status_log_push(STATUS_LOG_POWER_READY);
         }
     }
 }
@@ -123,7 +133,6 @@ void PD_UFP_c::handle_FUSB302_event(FUSB302_event_t events)
         return;
     }
     if (events & FUSB302_EVENT_ATTACHED) {
-        print_cc = 1;
         uint8_t cc1 = 0, cc2 = 0, cc = 0;
         FUSB302_get_cc(&FUSB302, &cc1, &cc2);
         PD_protocol_reset(&protocol);
@@ -140,6 +149,7 @@ void PD_UFP_c::handle_FUSB302_event(FUSB302_event_t events)
         } else {
             set_default_power();
         }
+        status_log_push(STATUS_LOG_CC);
     }
     if (events & FUSB302_EVENT_RX_SOP) {
         PD_protocol_event_t protocol_event = 0;
@@ -147,6 +157,7 @@ void PD_UFP_c::handle_FUSB302_event(FUSB302_event_t events)
         uint32_t obj[7];
         FUSB302_get_message(&FUSB302, &header, obj);
         PD_protocol_handle_msg(&protocol, header, obj, &protocol_event);
+        status_log_rx_msg();
         if (protocol_event) {
             handle_protocol_event(protocol_event);
         }
@@ -156,6 +167,7 @@ void PD_UFP_c::handle_FUSB302_event(FUSB302_event_t events)
         uint32_t obj[7];
         delay(2);  /* Delay respond in case there are retry messages */
         if (PD_protocol_respond(&protocol, &header, obj)) {
+            status_log_tx_msg();
             FUSB302_tx_sop(&FUSB302, header, obj);
         }
     }
@@ -171,6 +183,7 @@ bool PD_UFP_c::timer(void)
             get_src_cap_retry_count += 1;
             /* Try to request soruce capabilities message (will not cause power cycle VBUS) */
             PD_protocol_create_get_src_cap(&protocol, &header);
+            status_log_tx_msg();
             FUSB302_tx_sop(&FUSB302, header, 0);
         } else {
             get_src_cap_retry_count = 0;
@@ -192,6 +205,8 @@ bool PD_UFP_c::timer(void)
         uint32_t obj[7];
         /* Send request if option updated or regularly in PPS mode to keep power alive */
         PD_protocol_create_request(&protocol, &header, obj);
+        status_log_tx_msg();
+        time_wait_ps_rdy = clock_ms();
         FUSB302_tx_sop(&FUSB302, header, obj);
     }
     if (t - time_polling > t_PD_POLLING) {
@@ -311,6 +326,7 @@ PD_UFP_c::PD_UFP_c():
     led_current(PD_UFP_CURRENT_LED_OFF),
     PPS_voltage_next(0),
     status_initialized(0),
+    status_load_sw(0),
     status_src_cap_received(0),
     status_power(STATUS_POWER_NA),
     time_polling(0),
@@ -322,11 +338,8 @@ PD_UFP_c::PD_UFP_c():
     wait_ps_rdy(0),
     send_request(0),
     clock_prescaler(1),
-    print_dev(0),
-    print_cc(0),
-    print_src_cap(0),
-    print_request_reject(0),
-    print_power(STATUS_POWER_NA)
+    status_log_write(0),
+    status_log_read(0)
 {
     memset(&FUSB302, 0, sizeof(FUSB302_dev_t));
     memset(&protocol, 0, sizeof(PD_protocol_t));
@@ -367,7 +380,7 @@ void PD_UFP_c::init_PPS(uint16_t PPS_voltage, uint8_t PPS_current, enum PD_power
     PD_protocol_set_power_option(&protocol, power_option);
     PD_protocol_set_PPS(&protocol, PPS_voltage, PPS_current, false);
 
-    print_dev = 1;
+    status_log_push(STATUS_LOG_DEV);
 }
 
 void PD_UFP_c::run(void)
@@ -385,6 +398,10 @@ void PD_UFP_c::run(void)
 void PD_UFP_c::set_output(uint8_t enable)
 {
     digitalWrite(PIN_OUTPUT_ENABLE, enable);
+    if (status_load_sw != enable) {
+        status_load_sw = enable;
+        status_log_push(enable ? STATUS_LOG_LOAD_SW_ON : STATUS_LOG_LOAD_SW_OFF);
+    }
 }
 
 void PD_UFP_c::set_led(PD_UFP_VOLTAGE_LED_t index_v, PD_UFP_CURRENT_LED_t index_a)
@@ -440,60 +457,149 @@ uint16_t PD_UFP_c::clock_ms(void)
     return (uint16_t)millis() * clock_prescaler;
 }
 
-void PD_UFP_c::print_status(void)
+void PD_UFP_c::status_log_tx_msg(void)
 {
-    if (!Serial) {
-        return;
-    } else if (print_dev) {
-        print_dev = 0;
+    PD_msg_info_t m;
+    if (PD_protocol_get_tx_msg_info(&protocol, &m)) {
+        status_log_push(STATUS_LOG_MSG_TX, m.name_ref);
+    }
+}
+
+void PD_UFP_c::status_log_rx_msg(void)
+{
+    PD_msg_info_t m;
+    if (PD_protocol_get_rx_msg_info(&protocol, &m)) {
+        status_log_push(STATUS_LOG_MSG_RX, m.name_ref);
+    }
+}
+
+void PD_UFP_c::status_log_push(uint8_t status, uint8_t msg_name_ref)
+{
+    if (((status_log_write - status_log_read) & STATUS_LOG_MASK) <= STATUS_LOG_MASK) {
+        status_log_t * log = &status_log[status_log_write & STATUS_LOG_MASK];
+        log->status = status;
+        log->msg_name_ref = msg_name_ref;
+        log->time = clock_ms();
+        status_log_write++;
+    }
+}
+
+// Optimize RAM usage on AVR MCU by allocate format string in program memory
+#if defined(__AVR__)
+#include <avr/pgmspace.h>
+#define SNPRINTF snprintf_P
+#else
+#define SNPRINTF snprintf
+#define PSTR(str) str
+#endif
+
+#define LOG(format, ...) do { n = SNPRINTF(buffer, maxlen, PSTR(format), ## __VA_ARGS__); } while (0)
+
+int PD_UFP_c::status_log_readline(char * buffer, int maxlen)
+{
+    if (status_log_write == status_log_read) {
+        return 0;
+    }
+    
+    status_log_t * log = &status_log[status_log_read & STATUS_LOG_MASK];
+    int n = 0;
+    char t[10];
+    SNPRINTF(t, 10, PSTR("%04u: "), log->time);    // Log time 
+
+    switch (log->status) {
+    case STATUS_LOG_MSG_TX:
+        LOG("%sTX %s\n", t, PD_protocol_get_msg_name(log->msg_name_ref));
+        break;
+    case STATUS_LOG_MSG_RX:
+        LOG("%sRX %s\n", t, PD_protocol_get_msg_name(log->msg_name_ref));
+        break;
+    case STATUS_LOG_DEV:
         if (status_initialized) {
             uint8_t version_ID = 0, revision_ID = 0;
             FUSB302_get_ID(&FUSB302, &version_ID, &revision_ID);
-            LOG("FUSB302 version ID:%c_rev%c\n", 'A' + version_ID, 'A' + revision_ID);
+            LOG("\n%sFUSB302 ver ID:%c_rev%c\n", t, 'A' + version_ID, 'A' + revision_ID);
         } else {
-            LOG("FUSB302 init error\n");
+            LOG("\n%sFUSB302 init error\n", t);
         }
-    } else if (print_cc) {
-        print_cc = 0;
-        const char *detection_type_str[] = {"vRd-USB", "vRd-1.5", "vRd-3.0"};
+        break;
+    case STATUS_LOG_CC: {
+        const char *detection_type_str[] = {"USB", "1.5", "3.0"};
         uint8_t cc1 = 0, cc2 = 0;
         FUSB302_get_cc(&FUSB302, &cc1, &cc2);
         if (cc1 == 0 && cc2 == 0) {
-            LOG("PD: USB attached vRA\n");
+            LOG("%sUSB attached vRA\n", t);
         } else if (cc1 && cc2 == 0) {
-            LOG("PD: USB attached CC1 %s\n", detection_type_str[cc1 - 1]);
+            LOG("%sUSB attached CC1 vRd-%s\n", t, detection_type_str[cc1 - 1]);
         } else if (cc2 && cc1 == 0) {
-            LOG("PD: USB attached CC2 %s\n", detection_type_str[cc2 - 1]);
+            LOG("%sUSB attached CC2 vRd-%s\n", t, detection_type_str[cc2 - 1]);
         } else {
-            LOG("PD: USB attached unknown\n");
+            LOG("%sUSB attached unknown\n", t);
         }
-    } else if (print_src_cap) {
-        print_src_cap = 0;
+        break; }
+    case STATUS_LOG_SRC_CAP: {
         PD_power_info_t p;
-        uint8_t selected = PD_protocol_get_selected_power(&protocol);
-        for (uint8_t i = 0; PD_protocol_get_power_info(&protocol, i, &p); i++) {
+        uint8_t i = status_log_counter++;
+        if (PD_protocol_get_power_info(&protocol, i, &p)) {
+            uint8_t selected = PD_protocol_get_selected_power(&protocol);
             char min_v[8] = {0}, max_v[8] = {0}, power[8] = {0};
-            if (p.min_v) snprintf(min_v, 8, "%d.%02dV", p.min_v / 20, (p.min_v * 5) % 100);
-            if (p.max_v) snprintf(max_v, 8, "%d.%02dV", p.max_v / 20, (p.max_v * 5) % 100);
+            if (p.min_v) SNPRINTF(min_v, 8, PSTR("%d.%02dV-"), p.min_v / 20, (p.min_v * 5) % 100);
+            if (p.max_v) SNPRINTF(max_v, 8, PSTR("%d.%02dV"), p.max_v / 20, (p.max_v * 5) % 100);
             if (p.max_i) {
-                snprintf(power, 8, "%d.%02dA", p.max_i / 100, p.max_i % 100);
+                SNPRINTF(power, 8, PSTR("%d.%02dA"), p.max_i / 100, p.max_i % 100);
             } else {
-                snprintf(power, 8, "%d.%02dW", p.max_p / 4, p.max_p * 25);
+                SNPRINTF(power, 8, PSTR("%d.%02dW"), p.max_p / 4, p.max_p * 25);
             }
-            LOG("   [%d] %s%s %s%s\n", i, min_v, max_v, power, i == selected ? " *" : "");
+            LOG("%s   [%d] %s%s %s%s\n", t, i, min_v, max_v, power, i == selected ? " *" : "");
+            return n;
         }
-    } else if (print_power == STATUS_POWER_TYP) {
-        print_power = STATUS_POWER_NA;
-        PD_power_info_t p;
-        uint8_t selected_power = PD_protocol_get_selected_power(&protocol);
-        if (PD_protocol_get_power_info(&protocol, selected_power, &p)) {
-            LOG("PD: %d.%02dV supply ready\n", p.max_v / 20, (p.max_v * 5) % 100);
+        break; }
+    case STATUS_LOG_POWER_READY:
+        if (status_power == STATUS_POWER_TYP) {
+            PD_power_info_t p;
+            uint8_t selected_power = PD_protocol_get_selected_power(&protocol);
+            if (PD_protocol_get_power_info(&protocol, selected_power, &p)) {
+                LOG("%s%d.%02dV supply ready\n", t, p.max_v / 20, (p.max_v * 5) % 100);
+            }
+        } else if (status_power == STATUS_POWER_PPS) {
+            uint16_t v = PD_protocol_get_PPS_voltage(&protocol);
+            uint8_t a = PD_protocol_get_PPS_current(&protocol);
+            LOG("%sPPS %d.%02dV %d.%02dA supply ready\n", t, v / 50, (v * 2) % 100, a / 20, (a * 5) % 100);
         }
-    } else if (print_power == STATUS_POWER_PPS) {
-        print_power = STATUS_POWER_NA;
-        LOG("PD: PPS supply ready\n");
-    } else if (print_request_reject) {
-        print_request_reject = 0;
-        LOG("PD: Request Rejected\n");
-    }    
+        break;
+    case STATUS_LOG_POWER_PPS_STARTUP:
+        LOG("%sPPS 2-stage startup\n", t);
+        break;
+    case STATUS_LOG_POWER_REJECT:
+        LOG("%sRequest Rejected\n", t);
+        break;
+    case STATUS_LOG_LOAD_SW_ON:
+        LOG("%sLoad SW ON\n", t);
+        break;
+    case STATUS_LOG_LOAD_SW_OFF:
+        LOG("%sLoad SW OFF\n", t);
+        break;
+    }
+    status_log_read++;
+    status_log_counter = 0;
+    return n;
+}
+
+void PD_UFP_c::print_status(Serial_ & serial)
+{
+    if (serial && serial.availableForWrite() >= SERIAL_BUFFER_SIZE - 1) {
+        char buf[SERIAL_BUFFER_SIZE];
+        if (status_log_readline(buf, sizeof(buf) - 1)) {
+            serial.print(buf);
+        }
+    }
+}
+
+void PD_UFP_c::print_status(HardwareSerial & serial)
+{
+    if (serial && serial.availableForWrite() >= SERIAL_BUFFER_SIZE - 1) {
+        char buf[SERIAL_BUFFER_SIZE];
+        if (status_log_readline(buf, sizeof(buf) - 1)) {
+            serial.print(buf);
+        }
+    }
 }

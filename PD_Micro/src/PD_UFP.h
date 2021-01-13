@@ -2,7 +2,7 @@
 /**
  * PD_UFP.h
  *
- *  Updated on: Jan 4, 2021
+ *  Updated on: Jan 13, 2021
  *      Author: Ryan Ma
  *
  * Minimalist USB PD Ardunio Library for PD Micro board
@@ -17,6 +17,10 @@
 #define PD_UFP_H
 
 #include <stdint.h>
+
+#include <Arduino.h>
+#include <Wire.h>
+#include <HardwareSerial.h>
 
 extern "C" {
     #include "FUSB302_UFP.h"
@@ -50,6 +54,12 @@ enum {
 };
 typedef uint8_t status_power_t;
 
+struct status_log_t {
+    uint8_t status;
+    uint8_t msg_name_ref;
+    uint16_t time;
+};
+
 class PD_UFP_c
 {
     public:
@@ -73,9 +83,12 @@ class PD_UFP_c
         
         bool set_PPS(uint16_t PPS_voltage, uint8_t PPS_current);
         void set_power_option(enum PD_power_option_t power_option);
-        void print_status(void);
 
         void clock_prescale_set(uint8_t prescaler);
+
+        int status_log_readline(char * buffer, int maxlen);
+        void print_status(Serial_ & serial);
+        void print_status(HardwareSerial & serial);
 
     private:
         void handle_protocol_event(PD_protocol_event_t events);
@@ -104,6 +117,7 @@ class PD_UFP_c
         uint16_t PPS_voltage_next;
         // Status
         uint8_t status_initialized;
+        uint8_t status_load_sw;
         uint8_t status_src_cap_received;
         status_power_t status_power;
         // Timer and counter for PD Policy
@@ -118,11 +132,13 @@ class PD_UFP_c
         uint8_t send_request;
         uint8_t clock_prescaler;
         // Status output
-        uint8_t print_dev;
-        uint8_t print_cc;
-        uint8_t print_src_cap;
-        uint8_t print_request_reject;
-        status_power_t print_power;
+        void status_log_tx_msg(void);
+        void status_log_rx_msg(void);
+        void status_log_push(uint8_t status, uint8_t msg_name_ref = 0);
+        status_log_t status_log[16];
+        uint8_t status_log_read;
+        uint8_t status_log_write;
+        uint8_t status_log_counter;
 };
 
 #endif
