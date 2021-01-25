@@ -1,0 +1,13 @@
+(module D1_8_PAD (layer F.Cu) (tedit 5E2C5CD9)
+  (descr "Mounting Hole 2.2mm, M2, ISO7380")
+  (tags "mounting hole 2.2mm m2 iso7380")
+  (attr virtual)
+  (fp_text reference REF** (at 0 -0.2) (layer F.Fab) hide
+    (effects (font (size 0.2 0.2) (thickness 0.05)))
+  )
+  (fp_text value VAL** (at 0 0.2) (layer F.Fab)
+    (effects (font (size 0.2 0.2) (thickness 0.05)))
+  )
+  (pad "" np_thru_hole circle (at 0 0) (size 1.8 1.8) (drill 1.8) (layers *.Cu *.Mask)
+    (zone_connect 2))
+)

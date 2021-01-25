@@ -1,0 +1,8 @@
+(sym_lib_table
+  (lib (name -Chip)(type Legacy)(uri ${KIPRJMOD}/library/symbol/Chip.lib)(options "")(descr ""))
+  (lib (name -Connector)(type Legacy)(uri ${KIPRJMOD}/library/symbol/Connector.lib)(options "")(descr ""))
+  (lib (name -Discrete)(type Legacy)(uri ${KIPRJMOD}/library/symbol/Discrete.lib)(options "")(descr ""))
+  (lib (name -Flag)(type Legacy)(uri ${KIPRJMOD}/library/symbol/Flag.lib)(options "")(descr ""))
+  (lib (name -Passive)(type Legacy)(uri ${KIPRJMOD}/library/symbol/Passive.lib)(options "")(descr ""))
+  (lib (name -Switch)(type Legacy)(uri ${KIPRJMOD}/library/symbol/Switch.lib)(options "")(descr ""))
+)

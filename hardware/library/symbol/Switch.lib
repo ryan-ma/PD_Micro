@@ -1,0 +1,21 @@
+EESchema-LIBRARY Version 2.4
+#encoding utf-8
+#
+# SW_Push
+#
+DEF SW_Push SW 0 40 N N 1 F N
+F0 "SW" 50 100 50 H V L CNN
+F1 "SW_Push" 0 -60 40 H V C CNN
+F2 "" 0 200 50 H I C CNN
+F3 "" 0 200 50 H I C CNN
+DRAW
+C -80 0 20 0 1 0 N
+C 80 0 20 0 1 0 N
+P 2 0 1 0 0 50 0 120 N
+P 2 0 1 0 100 50 -100 50 N
+X 1 1 -150 0 50 R 50 50 0 1 P
+X 2 2 150 0 50 L 50 50 0 1 P
+ENDDRAW
+ENDDEF
+#
+#End Library
