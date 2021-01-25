@@ -2,10 +2,10 @@
 /**
  * PD_UFP_Protocol.c
  *
- *  Updated on: Jan 13, 2021
+ *  Updated on: Jan 25, 2021
  *      Author: Ryan Ma
  *
- * Minimalist USB PD implement with only UFP(device) functionality
+ * Minimalist USB PD implement with only UFP(device) sink only functionality
  * Requires PD PHY to do automatic GoodCRC response on valid SOP messages.
  * Requires only stdint.h, stdbool.h and string.h
  * No use of bit-field for better cross-platform compatibility
@@ -80,10 +80,11 @@ typedef struct {
 } PPS_status_t;
 
 typedef struct {
-    uint8_t name_ref;   /* use PD_protocol_get_msg_name() to get message name */
+    const char * name;
     uint8_t id;
     uint8_t spec_rev;
     uint8_t num_of_obj;
+    uint8_t extended;
 } PD_msg_info_t;
 
 typedef struct {
@@ -111,22 +112,26 @@ typedef struct {
     uint8_t power_data_obj_selected;
 } PD_protocol_t;
 
+/* Message handler */
 void PD_protocol_handle_msg(PD_protocol_t *p, uint16_t header, uint32_t *obj, PD_protocol_event_t *events);
 bool PD_protocol_respond(PD_protocol_t *p, uint16_t *h, uint32_t *obj);
 
+/* PD Message creation */
 void PD_protocol_create_get_src_cap(PD_protocol_t *p, uint16_t *header);
 void PD_protocol_create_get_PPS_status(PD_protocol_t *p, uint16_t *header);
 void PD_protocol_create_request(PD_protocol_t *p, uint16_t *header, uint32_t *obj);
 
-static inline uint8_t PD_protocol_get_selected_power(PD_protocol_t *p) { return p->power_data_obj_selected; }
+/* Get functions */
+static inline uint8_t  PD_protocol_get_selected_power(PD_protocol_t *p) { return p->power_data_obj_selected; }
 static inline uint16_t PD_protocol_get_PPS_voltage(PD_protocol_t *p) { return p->PPS_voltage; } /* Voltage in 20mV units */
 static inline uint8_t  PD_protocol_get_PPS_current(PD_protocol_t *p) { return p->PPS_current; } /* Current in 50mA units */
 
-const char * PD_protocol_get_msg_name(uint8_t name_ref);
+static inline uint16_t PD_protocol_get_tx_msg_header(PD_protocol_t *p) { return p->tx_msg_header; }
+static inline uint16_t PD_protocol_get_rx_msg_header(PD_protocol_t *p) { return p->rx_msg_header; }
+
+bool PD_protocol_get_msg_info(uint16_t header, PD_msg_info_t * msg_info);
 
 bool PD_protocol_get_power_info(PD_protocol_t *p, uint8_t index, PD_power_info_t *power_info);
-bool PD_protocol_get_tx_msg_info(PD_protocol_t *p, PD_msg_info_t *msg_info);
-bool PD_protocol_get_rx_msg_info(PD_protocol_t *p, PD_msg_info_t *msg_info);
 bool PD_protocol_get_PPS_status(PD_protocol_t *p, PPS_status_t * PPS_status);
 
 /* Set Fixed and Variable power option */

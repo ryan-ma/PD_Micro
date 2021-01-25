@@ -2,7 +2,8 @@
 #include <Wire.h>
 #include "src/PD_UFP.h"
 
-class PD_UFP_c PD_UFP;
+// To log raw packet, init PD_UFP with parameter PD_UFP(PD_UFP(PD_LOG_LEVEL_VERBOSE)
+class PD_UFP_log_c PD_UFP;
 
 void setup() {
   Serial1.begin(115200);  // Serial1 is hardware serial on Pin 1 and 2

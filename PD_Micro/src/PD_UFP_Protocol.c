@@ -2,10 +2,10 @@
 /**
  * PD_UFP_Protocol.c
  *
- *  Updated on: Jan 13, 2021
+ *  Updated on: Jan 25, 2021
  *      Author: Ryan Ma
  *
- * Minimalist USB PD implement with only UFP(device) functionality
+ * Minimalist USB PD implement with only UFP(device) sink only functionality
  * Requires PD PHY to do automatic GoodCRC response on valid SOP messages.
  * Requires only stdint.h, stdbool.h and string.h
  * No use of bit-field for better cross-platform compatibility
@@ -431,26 +431,6 @@ static bool responder_vender_def(PD_protocol_t * p, uint16_t * header, uint32_t 
     return false;
 }
 
-static bool PD_protocol_get_msg_info(uint16_t header, PD_msg_info_t * msg_info)
-{
-    PD_msg_header_info_t h;
-    parse_header(&h, header);
-    if (msg_info) {
-        uint8_t name_ref = h.type;
-        if (header & 0x8000) {
-            name_ref |= 0x80;
-        } else if (h.num_of_obj) {
-            name_ref |= 0x40;
-        }
-        msg_info->name_ref = name_ref;
-        msg_info->id = h.id;
-        msg_info->spec_rev = h.spec_rev;
-        msg_info->num_of_obj = h.num_of_obj;
-        return true;
-    }
-    return false;
-}
-
 void PD_protocol_handle_msg(PD_protocol_t * p, uint16_t header, uint32_t * obj, PD_protocol_event_t * events)
 {
     #define EXT_MSG_LIMIT   (sizeof(ext_msg_list) / sizeof(ext_msg_list[0]) - 1)
@@ -537,25 +517,25 @@ bool PD_protocol_get_power_info(PD_protocol_t * p, uint8_t index, PD_power_info_
     return false;
 }
 
-const char * PD_protocol_get_msg_name(uint8_t name_ref)
+bool PD_protocol_get_msg_info(uint16_t header, PD_msg_info_t * msg_info)
 {
-    const char * name;
-    const struct PD_msg_state_t * state;
-    uint8_t type = name_ref & 0x1F;
-    SET_MSG_STAGE(state, name_ref & 0x80 ? &ext_msg_list[type] : 
-                         name_ref & 0x40 ? &data_msg_list[type] : &ctrl_msg_list[type]);
-    SET_MSG_NAME(name, state->name);
-    return name;
-}
-
-bool PD_protocol_get_tx_msg_info(PD_protocol_t * p, PD_msg_info_t * msg_info)
-{
-    return p && PD_protocol_get_msg_info(p->tx_msg_header, msg_info);
-}
-
-bool PD_protocol_get_rx_msg_info(PD_protocol_t * p, PD_msg_info_t * msg_info)
-{
-    return p && PD_protocol_get_msg_info(p->rx_msg_header, msg_info);
+    PD_msg_header_info_t h;
+    parse_header(&h, header);
+    if (msg_info) {
+        const char * name;
+        const struct PD_msg_state_t * state;
+        uint8_t type = h.type;
+        SET_MSG_STAGE(state, header & 0x8000 ? &ext_msg_list[type] :
+                        h.num_of_obj ? &data_msg_list[type] : &ctrl_msg_list[type]);
+        SET_MSG_NAME(name, state->name);
+        msg_info->name = name;
+        msg_info->id = h.id;
+        msg_info->spec_rev = h.spec_rev;
+        msg_info->num_of_obj = h.num_of_obj;
+        msg_info->extended = header >> 15;
+        return true;
+    }
+    return false;
 }
 
 bool PD_protocol_get_PPS_status(PD_protocol_t *p, PPS_status_t * PPS_status)
