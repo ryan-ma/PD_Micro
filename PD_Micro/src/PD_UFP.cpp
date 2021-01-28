@@ -2,7 +2,7 @@
 /**
  * PD_UFP.h
  *
- *  Updated on: Jan 25, 2021
+ *  Updated on: Jan 28, 2021
  *      Author: Ryan Ma
  *
  * Minimalist USB PD Ardunio Library for PD Micro board
@@ -312,6 +312,8 @@ void PD_UFP_core_c::status_power_ready(status_power_t status, uint16_t voltage, 
     status_power = status;
 }
 
+uint8_t PD_UFP_core_c::clock_prescaler = 1;
+
 void PD_UFP_core_c::delay_ms(uint16_t ms)
 {
     delay(ms / clock_prescaler);
@@ -326,8 +328,6 @@ uint16_t PD_UFP_core_c::clock_ms(void)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // PD_UFP_c, extended from PD_UFP_core_c, Add LED and Load switch functions
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-uint8_t PD_UFP_core_c::clock_prescaler = 1;
-
 PD_UFP_c::PD_UFP_c():
     led_blink_enable(0),
     led_blink_status(0),
@@ -493,7 +493,7 @@ void PD_UFP_c::handle_led(void)
 //           Asynchronous, minimal impact on PD timing.
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 #define STATUS_LOG_MASK         (sizeof(status_log) / sizeof(status_log[0]) - 1)
-#define STATUS_LOG_OBJ_MASK     (sizeof(status_log) / sizeof(status_log[0]) - 1)
+#define STATUS_LOG_OBJ_MASK     (sizeof(status_log_obj) / sizeof(status_log_obj[0]) - 1)
 
 PD_UFP_log_c::PD_UFP_log_c(pd_log_level_t log_level):
     status_log_write(0),
@@ -509,12 +509,13 @@ PD_UFP_log_c::PD_UFP_log_c(pd_log_level_t log_level):
 uint8_t PD_UFP_log_c::status_log_obj_add(uint16_t header, uint32_t * obj)
 {
     if (obj) {
-        int i;
+        uint8_t i, w = status_log_obj_write, r = status_log_obj_read;
         PD_msg_info_t info;
         PD_protocol_get_msg_info(header, &info);
-        for (i = 0; i < info.num_of_obj; i++) {
-            status_log_obj[status_log_obj_write++ & STATUS_LOG_OBJ_MASK] = obj[i];
+        for (i = 0; i < info.num_of_obj && (uint8_t)(w - r) < STATUS_LOG_OBJ_MASK; i++) {
+            status_log_obj[w++ & STATUS_LOG_OBJ_MASK] = obj[i];
         }
+        status_log_obj_write = w;
         return i;
     }
     return 0;
