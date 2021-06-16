@@ -591,6 +591,7 @@ int PD_UFP_log_c::status_log_readline_src_cap(char * buffer, int maxlen)
     int n = 0;
     uint8_t i = status_log_counter;
     if (PD_protocol_get_power_info(&protocol, i, &p)) {
+        const char * str_pps[] = {"", " BAT", " VAR", " PPS"};  /* PD_power_data_obj_type_t */
         char * t = status_log_time;
         uint8_t selected = PD_protocol_get_selected_power(&protocol);
         char min_v[8] = {0}, max_v[8] = {0}, power[8] = {0};
@@ -601,7 +602,7 @@ int PD_UFP_log_c::status_log_readline_src_cap(char * buffer, int maxlen)
         } else {
             SNPRINTF(power, sizeof(power)-1, PSTR("%d.%02dW"), p.max_p / 4, p.max_p * 25);
         }
-        LOG("%s   [%d] %s%s %s%s\n", t, i, min_v, max_v, power, i == selected ? " *" : "");
+        LOG("%s   [%d] %s%s %s%s%s\n", t, i, min_v, max_v, power, str_pps[p.type], i == selected ? " *" : "");
         status_log_counter++;
     } else {
         status_log_counter = 0;

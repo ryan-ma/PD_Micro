@@ -508,7 +508,7 @@ bool PD_protocol_get_power_info(PD_protocol_t * p, uint8_t index, PD_power_info_
             /* Reference: 6.4.1.3.4 Programmable Power Supply Augmented Power Data Object */
             power_info->max_v = ((obj >> 17) & 0xFF) * 2;   /*  B24...17  Max Voltage in 100mV units */
             power_info->min_v = ((obj >>  8) & 0xFF) * 2;   /*  B15...8   Min Voltage in 100mV units */
-            power_info->max_i = ((obj >>  0) & 0x3F) * 5;   /*  B6 ...0   Max Current in 50mA units */
+            power_info->max_i = ((obj >>  0) & 0x7F) * 5;   /*  B6 ...0   Max Current in 50mA units */
             power_info->max_p = 0;
             break;
         }
