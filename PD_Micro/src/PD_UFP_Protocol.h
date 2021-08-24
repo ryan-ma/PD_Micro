@@ -2,7 +2,7 @@
 /**
  * PD_UFP_Protocol.c
  *
- *  Updated on: Jan 25, 2021
+ *  Updated on: Aug 25, 2021
  *      Author: Ryan Ma
  *
  * Minimalist USB PD implement with only UFP(device) sink only functionality
@@ -33,6 +33,7 @@
 #define PPS_V(v)    ((uint16_t)(v * 50 + 0.01))
 #define PPS_A(a)    ((uint8_t)(a * 20 + 0.01))
 
+#define PD_PROTOCOL_MAX_NUM_OF_PDO      7
 
 #define PD_PROTOCOL_EVENT_SRC_CAP       (1 << 0)
 #define PD_PROTOCOL_EVENT_PS_RDY        (1 << 1)
@@ -107,7 +108,7 @@ typedef struct {
     uint8_t PPSSDB[4];  /* PPS Status Data Block */
 
     enum PD_power_option_t power_option;
-    uint32_t power_data_obj[6];
+    uint32_t power_data_obj[PD_PROTOCOL_MAX_NUM_OF_PDO];
     uint8_t power_data_obj_count;
     uint8_t power_data_obj_selected;
 } PD_protocol_t;
